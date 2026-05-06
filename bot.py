@@ -24,7 +24,7 @@ def ask_ai(chat_id, message):
             "Content-Type": "application/json"
         },
         json={
-            "model": "meta-llama/llama-4-scout:free",
+            "model": "meta-llama/llama-3.1-8b-instruct:free",
             "messages": chat_histories[chat_id]
         }
     )
