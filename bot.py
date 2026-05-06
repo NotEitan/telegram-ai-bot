@@ -7,26 +7,35 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 logging.basicConfig(level=logging.INFO)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 
 chat_histories = {}
 
-def ask_gemini(chat_id, message):
+def ask_ai(chat_id, message):
     if chat_id not in chat_histories:
         chat_histories[chat_id] = []
     
-    chat_histories[chat_id].append({"role": "user", "parts": [{"text": message}]})
+    chat_histories[chat_id].append({"role": "user", "content": message})
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-    payload = {"contents": chat_histories[chat_id]}
-    response = requests.post(url, json=payload)
+    response = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "model": "meta-llama/llama-4-scout:free",
+            "messages": chat_histories[chat_id]
+        }
+    )
+    
     result = response.json()
     
-    if "candidates" not in result:
+    if "choices" not in result:
         return f"Error: {result}"
     
-    reply = result["candidates"][0]["content"]["parts"][0]["text"]
-    chat_histories[chat_id].append({"role": "model", "parts": [{"text": reply}]})
+    reply = result["choices"][0]["message"]["content"]
+    chat_histories[chat_id].append({"role": "assistant", "content": reply})
     return reply
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -39,7 +48,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         message = message.replace(f"@{bot_username}", "").strip()
 
-    reply = ask_gemini(chat_id, message)
+    reply = ask_ai(chat_id, message)
     await update.message.reply_text(reply)
 
 if __name__ == "__main__":
