@@ -24,7 +24,7 @@ def ask_ai(chat_id, message):
             "Content-Type": "application/json"
         },
         json={
-            "model": "google/gemma-4-31b-it:free",
+            "model": "nvidia/nemotron-3-super-120b-a12b:free",
             "messages": chat_histories[chat_id]
         }
     )
