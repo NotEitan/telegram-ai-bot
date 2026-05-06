@@ -17,10 +17,14 @@ def ask_gemini(chat_id, message):
     
     chat_histories[chat_id].append({"role": "user", "parts": [{"text": message}]})
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     payload = {"contents": chat_histories[chat_id]}
     response = requests.post(url, json=payload)
     result = response.json()
+    
+    if "candidates" not in result:
+        return f"Error: {result}"
+    
     reply = result["candidates"][0]["content"]["parts"][0]["text"]
     chat_histories[chat_id].append({"role": "model", "parts": [{"text": reply}]})
     return reply
