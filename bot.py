@@ -85,6 +85,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         message = message.replace(f"@{bot_username}", "").strip()
 
+    if message.startswith("Here is my Apple Health data"):
+        message = "Please analyze this health data and give me a concise summary with insights and recommendations:\n\n" + message
+
     reply = ask_ai(chat_id, message)
     await update.message.reply_text(reply)
 
