@@ -61,7 +61,7 @@ def ask_ai(chat_id, message, image_base64=None):
             "Content-Type": "application/json"
         },
         json={
-            "model": "nvidia/nemotron-3-super-120b-a12b:free",
+            "model": "meta-llama/llama-4-maverick:free",
             "messages": messages
         }
     )
