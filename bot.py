@@ -47,8 +47,10 @@ def ask_ai(chat_id, message, image_base64=None):
             {"type": "text", "text": message or "What food is this? Please estimate the calories and macros."},
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
         ]
+        model = "google/gemma-4-31b-it:free"
     else:
         content = message
+        model = "nvidia/nemotron-3-super-120b-a12b:free"
     
     chat_histories[chat_id].append({"role": "user", "content": content})
     
@@ -61,7 +63,7 @@ def ask_ai(chat_id, message, image_base64=None):
             "Content-Type": "application/json"
         },
         json={
-            "model": "google/gemma-4-26b-a4b-it:free"
+            "model": model,
             "messages": messages
         }
     )
