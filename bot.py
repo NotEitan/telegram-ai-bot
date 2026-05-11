@@ -61,7 +61,7 @@ def ask_ai(chat_id, message, image_base64=None):
             "Content-Type": "application/json"
         },
         json={
-            "model": "google/gemma-4-31b-it:free",
+            "model": "google/gemma-4-26b-a4b-it:free"
             "messages": messages
         }
     )
