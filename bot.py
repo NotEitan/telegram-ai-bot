@@ -1,7 +1,6 @@
 import os
 import logging
 import requests
-import base64
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
@@ -40,21 +39,11 @@ Important context:
 
 Always remember courier preferences, packaging notes, and order details shared in conversation."""
 
-def ask_ai(chat_id, message, image_base64=None):
+def ask_ai(chat_id, message):
     if chat_id not in chat_histories:
         chat_histories[chat_id] = []
     
-    if image_base64:
-        content = [
-            {"type": "text", "text": message or "What food is this? Please estimate the calories and macros."},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
-        ]
-        model = "google/gemma-4-31b-it:free"
-    else:
-        content = message
-        model = "nvidia/nemotron-3-super-120b-a12b:free"
-    
-    chat_histories[chat_id].append({"role": "user", "content": content})
+    chat_histories[chat_id].append({"role": "user", "content": message})
     
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + chat_histories[chat_id]
     
@@ -65,7 +54,7 @@ def ask_ai(chat_id, message, image_base64=None):
             "Content-Type": "application/json"
         },
         json={
-            "model": model,
+            "model": "mistralai/mistral-small-3.2-24b-instruct:free",
             "messages": messages
         }
     )
@@ -89,27 +78,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         message = message.replace(f"@{bot_username}", "").strip()
 
-    if message.startswith("Here is my Apple Health data"):
-        message = "Please analyze this health data and give me a concise summary with insights and recommendations:\n\n" + message
-
+   
     reply = ask_ai(chat_id, message)
     await update.message.reply_text(reply)
 
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    photo = update.message.photo[-1]
-    file = await context.bot.get_file(photo.file_id)
-    
-    file_bytes = bytes(await file.download_as_bytearray())
-    image_base64 = base64.b64encode(file_bytes).decode('utf-8')
-    
-    caption = update.message.caption or ""
-    reply = ask_ai(chat_id, caption, image_base64=image_base64)
-    await update.message.reply_text(reply)
+
 
 if __name__ == "__main__":
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     print("Bot is running...")
     app.run_polling()
