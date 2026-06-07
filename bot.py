@@ -171,6 +171,7 @@ def create_sales_order(customer_code, lines, comments=""):
         "SalesOrderLines": sales_order_lines,
         "Comments":        comments,
         "Currency":        {"CurrencyCode": "HKD"},
+        "TaxCode":         {"TaxCode": "NOTAX"},
     }
 
     resp = unleashed_request(
@@ -191,7 +192,7 @@ def create_sales_order(customer_code, lines, comments=""):
 
 # ─── System Prompt ────────────────────────────────────────────────────────────
 
-BASE_PROMPT = """You are Wonka, a smart and reliable logistics assistant for Conspiracy Chocolate — a boutique chocolatier based in Hong Kong with operations in Singapore and Australia.
+BASE_PROMPT = """You are Wonka, a smart and reliable logistics assistant for Conspiracy Chocolate — a boutique chocolatier based in Hong Kong.
 
 About the company:
 - Small team of 8-9 staff
