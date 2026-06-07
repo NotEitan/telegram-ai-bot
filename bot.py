@@ -54,7 +54,7 @@ def ask_ai(chat_id, message):
             "Content-Type": "application/json"
         },
         json={
-            "model": "openrouter/free",
+            "model": "nvidia/nemotron-3-super-120b-a12b:free",
             "messages": messages
         }
     )
