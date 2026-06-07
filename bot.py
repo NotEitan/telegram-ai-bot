@@ -54,7 +54,7 @@ def ask_ai(chat_id, message):
             "Content-Type": "application/json"
         },
         json={
-            "model": "mistralai/mistral-small-3.2-24b-instruct:free",
+            "model": "openrouter/free",
             "messages": messages
         }
     )
