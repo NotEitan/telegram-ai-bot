@@ -35,11 +35,11 @@ UNLEASHED_BASE_URL = "https://api.unleashedsoftware.com"
 chat_histories = {}
 MAX_HISTORY    = 20
 
-# Pending orders waiting for confirmation — keyed by chat_id
-pending_orders = {}
-
 # Path to the core memory file (persists on Render's disk)
 CORE_MEMORY_PATH = "/opt/render/project/src/core_memory.txt"
+
+# Pending orders are stored on disk so they survive across instances/restarts
+PENDING_ORDERS_DIR = "/opt/render/project/src/pending_orders"
 
 
 # ─── Safe HTTP wrapper ────────────────────────────────────────────────────────
@@ -82,6 +82,31 @@ def write_core_memory(content):
     os.makedirs(os.path.dirname(CORE_MEMORY_PATH), exist_ok=True)
     with open(CORE_MEMORY_PATH, "w", encoding="utf-8") as f:
         f.write(content.strip())
+
+
+# ─── Disk-based Pending Orders ───────────────────────────────────────────────
+# Stored on disk so they survive even if two instances briefly overlap.
+
+def save_pending_order(chat_id, order_data):
+    os.makedirs(PENDING_ORDERS_DIR, exist_ok=True)
+    path = os.path.join(PENDING_ORDERS_DIR, f"{chat_id}.json")
+    with open(path, "w") as f:
+        json.dump(order_data, f)
+
+def load_pending_order(chat_id):
+    path = os.path.join(PENDING_ORDERS_DIR, f"{chat_id}.json")
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+
+def delete_pending_order(chat_id):
+    path = os.path.join(PENDING_ORDERS_DIR, f"{chat_id}.json")
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
 
 
 # ─── Google Sheet Fetcher ─────────────────────────────────────────────────────
@@ -454,7 +479,8 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
 
     if query.data == "confirm_order":
-        order_data = pending_orders.pop(chat_id, None)
+        order_data = load_pending_order(chat_id)
+        delete_pending_order(chat_id)
         if not order_data:
             await query.edit_message_text(
                 "⚠️ No pending order found — it may have already been submitted or cancelled."
@@ -481,7 +507,7 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
 
     elif query.data == "cancel_order":
-        pending_orders.pop(chat_id, None)
+        delete_pending_order(chat_id)
         await query.edit_message_text("❌ Order cancelled. Nothing was sent to Unleashed.")
 
 
@@ -539,7 +565,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.error(f"Failed to write core memory: {e}")
 
     if order_data:
-        pending_orders[chat_id] = order_data
+        save_pending_order(chat_id, order_data)
         summary = format_order_summary(order_data, customer_name_map, product_name_map)
 
         if human_reply:
