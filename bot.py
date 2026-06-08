@@ -38,9 +38,6 @@ MAX_HISTORY    = 20
 # Path to the core memory file (persists on Render's disk)
 CORE_MEMORY_PATH = "/tmp/core_memory.txt"
 
-# Pending orders are stored on disk so they survive across instances/restarts
-PENDING_ORDERS_DIR = "/tmp/pending_orders"
-
 
 # ─── Safe HTTP wrapper ────────────────────────────────────────────────────────
 # The ONLY function allowed to talk to Unleashed.
@@ -82,31 +79,6 @@ def write_core_memory(content):
     os.makedirs(os.path.dirname(CORE_MEMORY_PATH), exist_ok=True)
     with open(CORE_MEMORY_PATH, "w", encoding="utf-8") as f:
         f.write(content.strip())
-
-
-# ─── Disk-based Pending Orders ───────────────────────────────────────────────
-# Stored on disk so they survive even if two instances briefly overlap.
-
-def save_pending_order(chat_id, order_data):
-    os.makedirs(PENDING_ORDERS_DIR, exist_ok=True)
-    path = os.path.join(PENDING_ORDERS_DIR, f"{chat_id}.json")
-    with open(path, "w") as f:
-        json.dump(order_data, f)
-
-def load_pending_order(chat_id):
-    path = os.path.join(PENDING_ORDERS_DIR, f"{chat_id}.json")
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return None
-
-def delete_pending_order(chat_id):
-    path = os.path.join(PENDING_ORDERS_DIR, f"{chat_id}.json")
-    try:
-        os.remove(path)
-    except FileNotFoundError:
-        pass
 
 
 # ─── Google Sheet Fetcher ─────────────────────────────────────────────────────
@@ -217,11 +189,11 @@ def create_sales_order(customer_code, lines, comments=""):
 
 # ─── System Prompt ────────────────────────────────────────────────────────────
 
-BASE_PROMPT = """You are Wonka, a smart and reliable logistics assistant for Conspiracy Chocolate — a boutique chocolatier based in Hong Kong with operations in Singapore and Australia.
+BASE_PROMPT = """You are Wonka, a smart and reliable logistics assistant for Conspiracy Chocolate — a boutique chocolatier based in Hong Kong with operations in Macao.
 
 About the company:
 - Small team of 8-9 staff
-- Products are handmade chocolates shipped to clients across Hong Kong, Macao, Singapore, and Australia
+- Products are handmade chocolates shipped to clients across Hong Kong and Macao
 - The user handles ALL logistics: packing orders, creating invoices, managing couriers, and packaging inventory
 
 Your main jobs:
@@ -479,8 +451,7 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
 
     if query.data == "confirm_order":
-        order_data = load_pending_order(chat_id)
-        delete_pending_order(chat_id)
+        order_data = context.application.bot_data.pop(f"pending_{chat_id}", None)
         if not order_data:
             await query.edit_message_text(
                 "⚠️ No pending order found — it may have already been submitted or cancelled."
@@ -507,7 +478,7 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
 
     elif query.data == "cancel_order":
-        delete_pending_order(chat_id)
+        context.application.bot_data.pop(f"pending_{chat_id}", None)
         await query.edit_message_text("❌ Order cancelled. Nothing was sent to Unleashed.")
 
 
@@ -565,7 +536,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.error(f"Failed to write core memory: {e}")
 
     if order_data:
-        save_pending_order(chat_id, order_data)
+        context.application.bot_data[f"pending_{chat_id}"] = order_data
         summary = format_order_summary(order_data, customer_name_map, product_name_map)
 
         if human_reply:
