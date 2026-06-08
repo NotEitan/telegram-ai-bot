@@ -193,11 +193,11 @@ def create_sales_order(customer_code, lines, comments=""):
 
 # ─── System Prompt ────────────────────────────────────────────────────────────
 
-BASE_PROMPT = """You are Wonka, a smart and reliable logistics assistant for Conspiracy Chocolate — a boutique chocolatier based in Hong Kong with operations in Macao as well.
+BASE_PROMPT = """You are Wonka, a smart and reliable logistics assistant for Conspiracy Chocolate — a boutique chocolatier based in Hong Kong with operations in Singapore and Australia.
 
 About the company:
 - Small team of 8-9 staff
-- Products are handmade chocolates shipped to clients across Hong Kong and Macao
+- Products are handmade chocolates shipped to clients across Hong Kong, Macao, Singapore, and Australia
 - The user handles ALL logistics: packing orders, creating invoices, managing couriers, and packaging inventory
 
 Your main jobs:
@@ -562,34 +562,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == "__main__":
     import time
-    from telegram.error import Conflict
 
-    # Wait for any previous instance to fully shut down before polling starts.
-    print("Wonka starting up, waiting 15s for previous instance to shut down...")
-    time.sleep(15)
-
-    async def post_init(application):
-        """Force-close any existing polling session before we start."""
-        try:
-            # close() tells Telegram to drop the previous instance's connection immediately
-            await application.bot.close()
-        except Exception:
-            pass
-        await application.bot.delete_webhook(drop_pending_updates=True)
-
-    app = (
-        Application.builder()
-        .token(TELEGRAM_TOKEN)
-        .post_init(post_init)
-        .build()
-    )
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help",  help_command))
     app.add_handler(CallbackQueryHandler(handle_confirmation))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("Wonka is running...")
-    app.run_polling(
-        drop_pending_updates=True,
-        allowed_updates=Update.ALL_TYPES,
-    )
+
+    # Retry loop — if a 409 Conflict occurs (old instance still alive),
+    # wait 10 seconds and try again. Render guarantees the old instance
+    # dies within ~60s, so 10 retries is more than enough.
+    max_retries = 10
+    for attempt in range(max_retries):
+        try:
+            app.run_polling(drop_pending_updates=True)
+            break  # clean exit
+        except Exception as e:
+            if ("409" in str(e) or "Conflict" in str(e)) and attempt < max_retries - 1:
+                print(f"409 Conflict — old instance still running, retrying in 10s (attempt {attempt + 1}/{max_retries})...")
+                time.sleep(10)
+            else:
+                print(f"Failed after {max_retries} attempts or non-409 error: {e}")
+                raise
