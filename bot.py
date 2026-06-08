@@ -269,7 +269,7 @@ def ask_ai(chat_id, message, system_prompt):
 
     resp = requests.post(
         "https://openrouter.ai/api/v1/chat/completions",
-        headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+        headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json", "HTTP-Referer": "https://conspiracy.chocolate", "X-Title": "WonkaBot"},
         json={"model": "nvidia/nemotron-3-super-120b-a12b:free", "messages": messages},
         timeout=60,
     )
