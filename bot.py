@@ -533,6 +533,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == "__main__":
     import time
 
+    # Wait for Render to kill the old instance before we start polling.
+    # Render kills the old instance within ~30s of the new one starting.
+    print("Waiting 35s for old instance to shut down...")
+    time.sleep(35)
+    print("Starting now.")
+
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help",  help_command))
@@ -540,15 +546,4 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("Wonka is running...")
-
-    max_retries = 10
-    for attempt in range(max_retries):
-        try:
-            app.run_polling(drop_pending_updates=True)
-            break
-        except Exception as e:
-            if ("409" in str(e) or "Conflict" in str(e)) and attempt < max_retries - 1:
-                print(f"409 Conflict — retrying in 10s (attempt {attempt + 1}/{max_retries})...")
-                time.sleep(10)
-            else:
-                raise
+    app.run_polling(drop_pending_updates=True)
