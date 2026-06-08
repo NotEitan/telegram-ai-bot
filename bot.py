@@ -29,13 +29,12 @@ _raw_ids         = os.environ.get("ALLOWED_USER_IDS", "")
 ALLOWED_USER_IDS = set(int(i.strip()) for i in _raw_ids.split(",") if i.strip().isdigit())
 
 UNLEASHED_BASE_URL = "https://api.unleashedsoftware.com"
-CORE_MEMORY_PATH   = "/tmp/core_memory.txt"
+CORE_MEMORY_PATH   = "/data/core_memory.txt"
 chat_histories     = {}
 MAX_HISTORY        = 20
 
 
 # ─── Safe HTTP wrapper ────────────────────────────────────────────────────────
-# Only GET and POST are permitted — no DELETE or PUT ever reaches Unleashed.
 
 def unleashed_request(method, path, **kwargs):
     method = method.upper()
@@ -355,9 +354,9 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
         order_data = context.application.bot_data.pop(f"pending_{cid}", None)
         if not order_data:
             try:
-                with open(f"/tmp/wonka/{cid}.json") as f:
+                with open(f"/data/wonka/{cid}.json") as f:
                     order_data = json.load(f)
-                os.remove(f"/tmp/wonka/{cid}.json")
+                os.remove(f"/data/wonka/{cid}.json")
             except Exception:
                 pass
         if not order_data:
@@ -383,7 +382,7 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
         cid = int(query.data[3:])
         context.application.bot_data.pop(f"pending_{cid}", None)
         try:
-            os.remove(f"/tmp/wonka/{cid}.json")
+            os.remove(f"/data/wonka/{cid}.json")
         except Exception:
             pass
         await query.edit_message_text("Order cancelled. Nothing was sent to Unleashed.")
@@ -412,7 +411,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     product_lookup  = None
 
     if is_new_order(message):
-        chat_histories[chat_id] = []  # fresh start for every new order
+        chat_histories[chat_id] = []
         try:
             await update.message.reply_text("Fetching latest catalog from the sheet...")
             customer_lookup, product_lookup, customer_map, product_map = fetch_catalog()
@@ -436,8 +435,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.application.bot_data[f"pending_{chat_id}"] = order_data
         try:
-            os.makedirs("/tmp/wonka", exist_ok=True)
-            with open(f"/tmp/wonka/{chat_id}.json", "w") as f:
+            os.makedirs("/data/wonka", exist_ok=True)
+            with open(f"/data/wonka/{chat_id}.json", "w") as f:
                 json.dump(order_data, f)
         except Exception as e:
             logging.warning(f"Pending order file write failed: {e}")
@@ -456,7 +455,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == "__main__":
     time.sleep(20)
-    
+
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help",  help_command))
