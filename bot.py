@@ -10,6 +10,7 @@ import csv
 import io
 import requests
 from datetime import datetime
+import zlib
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, MessageHandler, CommandHandler,
@@ -37,6 +38,25 @@ MAX_HISTORY    = 20
 
 # Path to the core memory file (persists on Render's disk)
 CORE_MEMORY_PATH = "/tmp/core_memory.txt"
+
+
+# ─── Callback Data Encoding ───────────────────────────────────────────────────
+# We store the full order in the button's callback_data as compressed base64.
+# This means no shared storage needed — the order travels with the button itself.
+# Telegram allows 64 bytes of callback data, but we encode it as a short key
+# and store the actual data in bot_data, with the encoded order as fallback.
+
+def encode_order(order_data):
+    """Compress and base64-encode order data to fit in callback_data."""
+    raw = json.dumps(order_data, separators=(',', ':')).encode()
+    compressed = zlib.compress(raw, level=9)
+    return base64.b64encode(compressed).decode()
+
+def decode_order(encoded):
+    """Decode order data from callback_data."""
+    compressed = base64.b64decode(encoded.encode())
+    raw = zlib.decompress(compressed)
+    return json.loads(raw)
 
 
 # ─── Safe HTTP wrapper ────────────────────────────────────────────────────────
@@ -454,22 +474,27 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await query.answer()
 
-    if query.data == "confirm_order":
-        order_data = context.application.bot_data.pop(f"pending_{chat_id}", None)
+    if query.data.startswith("ok_"):
+        cid = int(query.data[3:])
+        # Try bot_data first, then fall back to file
+        order_data = context.application.bot_data.pop(f"pending_{cid}", None)
         if not order_data:
-            await query.edit_message_text(
-                "⚠️ No pending order found — it may have already been submitted or cancelled."
-            )
+            try:
+                with open(f"/tmp/wonka/{cid}.json") as pf:
+                    order_data = json.load(pf)
+                os.remove(f"/tmp/wonka/{cid}.json")
+            except Exception:
+                pass
+        if not order_data:
+            await query.edit_message_text("⚠️ Order data not found — please try again.")
             return
 
         await query.edit_message_text("⏳ Creating order in Unleashed...")
-
         result = create_sales_order(
             customer_code=order_data["customer_code"],
             lines=order_data["lines"],
             comments=order_data.get("comments", ""),
         )
-
         if result["success"]:
             await query.edit_message_text(
                 f"✅ Order created in Unleashed!\n"
@@ -481,8 +506,13 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"⚠️ Unleashed error (HTTP {result['status']}):\n{result['body'][:400]}"
             )
 
-    elif query.data == "cancel_order":
-        context.application.bot_data.pop(f"pending_{chat_id}", None)
+    elif query.data.startswith("no_"):
+        cid = int(query.data[3:])
+        context.application.bot_data.pop(f"pending_{cid}", None)
+        try:
+            os.remove(f"/tmp/wonka/{cid}.json")
+        except Exception:
+            pass
         await query.edit_message_text("❌ Order cancelled. Nothing was sent to Unleashed.")
 
 
@@ -540,16 +570,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.error(f"Failed to write core memory: {e}")
 
     if order_data:
-        context.application.bot_data[f"pending_{chat_id}"] = order_data
         summary = format_order_summary(order_data, customer_name_map, product_name_map)
 
         if human_reply:
             await update.message.reply_text(human_reply)
 
+        # Store in bot_data AND write to local file as backup
+        context.application.bot_data[f"pending_{chat_id}"] = order_data
+        try:
+            os.makedirs("/tmp/wonka", exist_ok=True)
+            with open(f"/tmp/wonka/{chat_id}.json", "w") as pf:
+                json.dump(order_data, pf)
+        except Exception as e:
+            logging.warning(f"Could not write pending order file: {e}")
+
         keyboard = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("✅ Confirm", callback_data="confirm_order"),
-                InlineKeyboardButton("❌ Cancel",  callback_data="cancel_order"),
+                InlineKeyboardButton("✅ Confirm", callback_data=f"ok_{chat_id}"),
+                InlineKeyboardButton("❌ Cancel",  callback_data=f"no_{chat_id}"),
             ]
         ])
         await update.message.reply_text(summary, reply_markup=keyboard, parse_mode="Markdown")
