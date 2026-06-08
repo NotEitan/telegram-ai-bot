@@ -196,7 +196,7 @@ def create_sales_order(customer_code, lines, comments=""):
         "SalesOrderLines": sales_order_lines,
         "Comments":        comments,
         "Currency":        {"CurrencyCode": "HKD"},
-        "TaxCode":         {"TaxCode": "NOTAX"},
+        "TaxCode":         {"TaxCode": "NONE"},
     }
 
     resp = unleashed_request(
