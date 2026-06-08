@@ -165,7 +165,7 @@ def create_sales_order(customer_code, lines, comments=""):
         "Tax":             {"TaxCode": "NONE"},
     }
 
-    resp = unleashed_request("POST", f"/SalesOrders/{order_guid}", headers=unleashed_headers(), json=payload, timeout=15)
+    resp = unleashed_request("POST", f"/SalesOrders/{order_guid}", headers=unleashed_headers(), json=payload, timeout=60)
 
     if resp.status_code in (200, 201):
         return {"success": True, "order_number": resp.json().get("OrderNumber") or order_guid}
