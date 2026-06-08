@@ -114,16 +114,26 @@ CUSTOMER_PRICE_TIERS = {
 
 def get_product_price(product_code, customer_code):
     tier = CUSTOMER_PRICE_TIERS.get(customer_code, "Wholesale")
+    TIER_FIELDS = {
+        "Retail":                "SellPriceTier1",
+        "Wholesale":             "SellPriceTier2",
+        "Partnership":           "SellPriceTier3",
+        "Preferred Partnership": "SellPriceTier4",
+        "Sell Price Tier 5":     "SellPriceTier5",
+    }
+    field = TIER_FIELDS.get(tier, "SellPriceTier2")
     try:
-        query = f"productCode={product_code}&sellPriceTier={tier}"
-        resp  = unleashed_request("GET", f"/ProductPrices?{query}", headers=unleashed_headers(query), timeout=10)
+        query = f"productCode={product_code}"
+        resp  = unleashed_request("GET", f"/Products/1?{query}", headers=unleashed_headers(query), timeout=10)
         logging.info(f"Price lookup response: {resp.status_code} — {resp.text[:300]}")
         if resp.status_code == 200:
             items = resp.json().get("Items", [])
             if items:
-                return items[0].get("UnitPrice", 0) or 0
+                tier_data = items[0].get(field, {})
+                if tier_data:
+                    return tier_data.get("Value", 0) or 0
     except Exception as e:
-        logging.warning(f"Price lookup failed for {product_code} (tier: {tier}): {e}")
+        logging.warning(f"Price lookup failed for {product_code}: {e}")
     return 0
 
 
