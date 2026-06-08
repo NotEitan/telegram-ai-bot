@@ -562,15 +562,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == "__main__":
     import time
-    # Wait for any previous instance to fully shut down before polling starts.
-    # This prevents the 409 Conflict error on Render deploys.
-    print("Wonka starting up, waiting 5s for previous instance to shut down...")
-    time.sleep(5)
+    from telegram.error import Conflict
 
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    # Wait for any previous instance to fully shut down before polling starts.
+    print("Wonka starting up, waiting 15s for previous instance to shut down...")
+    time.sleep(15)
+
+    async def post_init(application):
+        """Force-close any existing polling session before we start."""
+        try:
+            # close() tells Telegram to drop the previous instance's connection immediately
+            await application.bot.close()
+        except Exception:
+            pass
+        await application.bot.delete_webhook(drop_pending_updates=True)
+
+    app = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .post_init(post_init)
+        .build()
+    )
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help",  help_command))
     app.add_handler(CallbackQueryHandler(handle_confirmation))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
     print("Wonka is running...")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+    )
