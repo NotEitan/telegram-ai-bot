@@ -147,11 +147,12 @@ def create_sales_order(customer_code, lines, comments=""):
     for i, line in enumerate(lines, start=1):
         unit_price = line.get("unit_price") or get_product_price(line["product_code"], customer_code)
         order_lines.append({
-            "LineNumber":    i,
-            "Product":       {"ProductCode": line["product_code"]},
-            "OrderQuantity": line["quantity"],
-            "UnitPrice":     unit_price,
-        })
+    "LineNumber":    i,
+    "Product":       {"ProductCode": line["product_code"]},
+    "OrderQuantity": line["quantity"],
+    "UnitPrice":     unit_price,
+    "LineTotal":     round(line["quantity"] * unit_price, 2),
+})
 
     payload = {
         "Guid":            order_guid,
