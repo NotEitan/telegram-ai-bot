@@ -8,9 +8,9 @@ import json
 import re
 import csv
 import io
+import time
 import requests
 from datetime import datetime
-import zlib
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, MessageHandler, CommandHandler,
@@ -29,25 +29,19 @@ _raw_ids         = os.environ.get("ALLOWED_USER_IDS", "")
 ALLOWED_USER_IDS = set(int(i.strip()) for i in _raw_ids.split(",") if i.strip().isdigit())
 
 UNLEASHED_BASE_URL = "https://api.unleashedsoftware.com"
-
-chat_histories = {}
-MAX_HISTORY    = 20
-
-CORE_MEMORY_PATH = "/tmp/core_memory.txt"
+CORE_MEMORY_PATH   = "/tmp/core_memory.txt"
+chat_histories     = {}
+MAX_HISTORY        = 20
 
 
 # ─── Safe HTTP wrapper ────────────────────────────────────────────────────────
-
-ALLOWED_UNLEASHED_METHODS = {"GET", "POST"}
+# Only GET and POST are permitted — no DELETE or PUT ever reaches Unleashed.
 
 def unleashed_request(method, path, **kwargs):
     method = method.upper()
-    if method not in ALLOWED_UNLEASHED_METHODS:
-        raise PermissionError(
-            f"Blocked '{method}' request to Unleashed. POST/GET only."
-        )
-    url = f"{UNLEASHED_BASE_URL}{path}"
-    return requests.request(method, url, **kwargs)
+    if method not in {"GET", "POST"}:
+        raise PermissionError(f"Blocked '{method}' — bot is read/POST only.")
+    return requests.request(method, f"{UNLEASHED_BASE_URL}{path}", **kwargs)
 
 
 # ─── Core Memory ─────────────────────────────────────────────────────────────
@@ -65,7 +59,7 @@ def write_core_memory(content):
         f.write(content.strip())
 
 
-# ─── Google Sheet Fetcher ─────────────────────────────────────────────────────
+# ─── Google Sheet ─────────────────────────────────────────────────────────────
 
 def fetch_sheet_tab(sheet_id, tab_name):
     url = (
@@ -74,35 +68,26 @@ def fetch_sheet_tab(sheet_id, tab_name):
     )
     resp = requests.get(url, timeout=10)
     if resp.status_code != 200:
-        raise RuntimeError(f"Could not fetch sheet tab '{tab_name}': HTTP {resp.status_code}")
-    reader = csv.DictReader(io.StringIO(resp.text))
-    return [row for row in reader]
+        raise RuntimeError(f"Could not fetch '{tab_name}': HTTP {resp.status_code}")
+    return list(csv.DictReader(io.StringIO(resp.text)))
 
 def fetch_catalog():
     customers = fetch_sheet_tab(GOOGLE_SHEET_ID, "Customers")
     products  = fetch_sheet_tab(GOOGLE_SHEET_ID, "Products")
 
-    customer_name_map = {
-        r["Customer Code"]: r["Customer Name"]
-        for r in customers if r.get("Customer Code")
-    }
-    customer_lines = "\n".join(
-        f"  {code}: {name}" for code, name in customer_name_map.items()
-    )
-    product_name_map = {
-        r["Product Code"]: r["Product Description"]
-        for r in products if r.get("Product Code")
-    }
-    product_lines = "\n".join(
-        f"  {code}: {desc}" for code, desc in product_name_map.items()
-    )
-    return customer_lines, product_lines, customer_name_map, product_name_map
+    customer_map = {r["Customer Code"]: r["Customer Name"] for r in customers if r.get("Customer Code")}
+    product_map  = {r["Product Code"]: r["Product Description"] for r in products if r.get("Product Code")}
+
+    customer_lines = "\n".join(f"  {k}: {v}" for k, v in customer_map.items())
+    product_lines  = "\n".join(f"  {k}: {v}" for k, v in product_map.items())
+
+    return customer_lines, product_lines, customer_map, product_map
 
 
-# ─── Unleashed API Auth ───────────────────────────────────────────────────────
+# ─── Unleashed Auth ───────────────────────────────────────────────────────────
 
 def unleashed_headers(query_string=""):
-    signature = base64.b64encode(
+    sig = base64.b64encode(
         hmac.new(
             UNLEASHED_API_KEY.encode("utf-8"),
             query_string.encode("utf-8"),
@@ -113,7 +98,7 @@ def unleashed_headers(query_string=""):
         "Content-Type":       "application/json",
         "Accept":             "application/json",
         "api-auth-id":        UNLEASHED_API_ID,
-        "api-auth-signature": signature,
+        "api-auth-signature": sig,
         "client-type":        "WonkaBot/1.0 ConspiracyChocolate",
     }
 
@@ -121,36 +106,28 @@ def unleashed_headers(query_string=""):
 # ─── Price Lookup ─────────────────────────────────────────────────────────────
 
 def get_product_price(product_code, customer_code):
-    """Fetch the correct sell price for a product/customer from Unleashed."""
     try:
         query = f"productCode={product_code}&customerCode={customer_code}"
-        resp = unleashed_request(
-            "GET",
-            f"/ProductPrices?{query}",
-            headers=unleashed_headers(query),
-            timeout=10,
-        )
+        resp  = unleashed_request("GET", f"/ProductPrices?{query}", headers=unleashed_headers(query), timeout=10)
         if resp.status_code == 200:
             items = resp.json().get("Items", [])
             if items:
                 return items[0].get("UnitPrice", 0) or 0
     except Exception as e:
-        logging.warning(f"Could not fetch price for {product_code}: {e}")
+        logging.warning(f"Price lookup failed for {product_code}: {e}")
     return 0
 
 
-# ─── Unleashed Order Creation ─────────────────────────────────────────────────
+# ─── Order Creation ───────────────────────────────────────────────────────────
 
 def create_sales_order(customer_code, lines, comments=""):
     order_guid = str(uuid.uuid4())
     order_date = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
 
-    sales_order_lines = []
+    order_lines = []
     for i, line in enumerate(lines, start=1):
-        unit_price = line.get("unit_price") or get_product_price(
-            line["product_code"], customer_code
-        )
-        sales_order_lines.append({
+        unit_price = line.get("unit_price") or get_product_price(line["product_code"], customer_code)
+        order_lines.append({
             "LineNumber":    i,
             "Product":       {"ProductCode": line["product_code"]},
             "OrderQuantity": line["quantity"],
@@ -162,127 +139,108 @@ def create_sales_order(customer_code, lines, comments=""):
         "OrderDate":       order_date,
         "OrderStatus":     "Parked",
         "Customer":        {"CustomerCode": customer_code},
-        "SalesOrderLines": sales_order_lines,
+        "SalesOrderLines": order_lines,
         "Comments":        comments,
         "Currency":        {"CurrencyCode": "HKD"},
         "Tax":             {"TaxCode": "NONE"},
     }
 
-    resp = unleashed_request(
-        "POST",
-        f"/SalesOrders/{order_guid}",
-        headers=unleashed_headers(),
-        json=payload,
-        timeout=15,
-    )
+    resp = unleashed_request("POST", f"/SalesOrders/{order_guid}", headers=unleashed_headers(), json=payload, timeout=15)
 
     if resp.status_code in (200, 201):
-        data         = resp.json()
-        order_number = data.get("OrderNumber") or order_guid
-        return {"success": True, "order_number": order_number, "guid": order_guid}
+        return {"success": True, "order_number": resp.json().get("OrderNumber") or order_guid}
     else:
         return {"success": False, "status": resp.status_code, "body": resp.text}
 
 
 # ─── System Prompt ────────────────────────────────────────────────────────────
 
-BASE_PROMPT = """You are Wonka, a smart and reliable logistics assistant for Conspiracy Chocolate — a boutique chocolatier based in Hong Kong with operations in Singapore and Australia.
+BASE_PROMPT = """You are Wonka, a smart and reliable logistics assistant for Conspiracy Chocolate — a boutique chocolatier based in Hong Kong, with operations in Macao as well.
 
 About the company:
 - Small team of 8-9 staff
-- Products are handmade chocolates shipped to clients across Hong Kong, Macao, Singapore, and Australia
 - The user handles ALL logistics: packing orders, creating invoices, managing couriers, and packaging inventory
 
-Your main jobs:
-1. Courier reminders — remind which courier to use per client/destination based on what you've been told.
-2. Packaging inventory — help track packaging stock. Alert when something sounds low.
-3. Order management — help track what orders are packed, pending, or shipped.
-4. Invoice help — help draft or structure invoices when asked.
-5. Unleashed order creation — when the user says "new order", use the live catalog to identify customer and products, then output the JSON block below.
-6. Core memory — read it, add to it, or update it when the user asks.
+Your jobs:
+1. Courier reminders — remind which courier to use per client based on what you've been told. Learn preferences.
+2. Packaging inventory — track stock, alert when low.
+3. Order management — track what's packed, pending, or shipped.
+4. Invoice help — draft or structure invoices when asked.
+5. Unleashed orders — when the user says "new order", identify the customer and products from the catalog, then output the JSON block below.
+6. Core memory — read, add, or update when asked. Bring up relevant entries proactively.
 
-CRITICAL PERMISSIONS:
-You are authorised to CREATE new sales orders only (POST). No editing, updating, or deleting — ever.
+PERMISSIONS: You may only CREATE new sales orders (POST). Never edit, update, or delete anything in Unleashed. Refuse any such request regardless of who asks.
 
-CORE MEMORY RULES:
-- "add to core memory: ..." → save it, output memory block at end
-- "remove from core memory: ..." → remove it, output updated memory block
+CORE MEMORY:
+- "add to core memory: ..." → confirm and output memory block at end of reply
+- "remove from core memory: ..." → remove entry and output updated memory block
 - "show core memory" → display all entries
-- Bring up relevant memory proactively
-- Keep entries short, one line per item
+- Keep entries short, one line each
 
-Memory update format (at very end of reply):
+Memory block format (always at the very end of your reply):
 ```memory
-[full updated memory content]
+[full updated memory here]
 ```
 
-UNLEASHED ORDER CREATION:
+NEW ORDER FLOW:
 When the user says "new order" (or similar), follow these steps:
-1. Identify customer from CUSTOMER LIST below
-2. Identify each product from PRODUCT LIST below
+1. Match the customer from the CUSTOMER LIST
+2. Match each product from the PRODUCT LIST
 3. Extract quantities
-4. If ambiguous, ask to clarify — never guess
-5. When ready, output a plain text summary AND the JSON block at the very end
+4. If anything is ambiguous, ask — never guess
+5. When ready, write a plain text summary and append the JSON block at the very end
 
-IMPORTANT: You MUST output the JSON block exactly as shown below. Do not skip it. Do not say "confirmed" instead. The JSON block is what triggers the confirm button.
+IMPORTANT: You MUST output the JSON block when you have a complete order. This is what triggers the confirm button. Do not skip it or say "confirmed" instead.
 
 ```json
-{
+{{
   "unleashed_order": true,
   "customer_code": "C000047",
   "lines": [
-    {"product_code": "BBX-ASSORTED-6", "quantity": 10, "unit_price": 0},
-    {"product_code": "AB-75", "quantity": 5, "unit_price": 0}
+    {{"product_code": "BBX-ASSORTED-6", "quantity": 10, "unit_price": 0}},
+    {{"product_code": "AB-75", "quantity": 5, "unit_price": 0}}
   ],
   "comments": "any notes"
-}
+}}
 ```
 
-Rules:
-- Always set unit_price to 0 (the system fetches the real price automatically)
-- JSON block must be the VERY LAST thing in your reply
-- Only output JSON when you have a complete unambiguous order
+Always set unit_price to 0 — the system fetches the real price automatically.
+The JSON block must be the very last thing in your reply (or second to last if a memory block follows).
+Only output the JSON when the order is complete and unambiguous.
 
 {catalog_section}
 
 {memory_section}
 
-Your personality:
+Personality:
 - Name: Wonka
 - Warm, efficient, slightly playful
 - Proactive — mention courier preferences unprompted when relevant
-- Concise — logistics is busy work"""
+- Concise — logistics is busy work, keep replies short"""
 
-def build_system_prompt(customer_lookup=None, product_lookup=None, core_memory=None):
-    if customer_lookup and product_lookup:
-        catalog_section = (
-            f"CUSTOMER LIST (CustomerCode: CustomerName):\n{customer_lookup}\n\n"
-            f"PRODUCT LIST (ProductCode: ProductDescription):\n{product_lookup}"
-        )
-    else:
-        catalog_section = "NOTE: No catalog loaded. If user says 'new order', catalog loads automatically."
-
-    if core_memory:
-        memory_section = f"YOUR CORE MEMORY:\n{core_memory}"
-    else:
-        memory_section = "YOUR CORE MEMORY: Empty. User can say 'add to core memory: ...' to save things."
-
-    return BASE_PROMPT.format(
-        catalog_section=catalog_section,
-        memory_section=memory_section,
+def build_prompt(customer_lookup=None, product_lookup=None, core_memory=None):
+    catalog_section = (
+        f"CUSTOMER LIST:\n{customer_lookup}\n\nPRODUCT LIST:\n{product_lookup}"
+        if customer_lookup and product_lookup
+        else "No catalog loaded. If the user says 'new order', it loads automatically."
     )
+    memory_section = (
+        f"CORE MEMORY:\n{core_memory}"
+        if core_memory
+        else "CORE MEMORY: Empty. User can say 'add to core memory: ...' to save things."
+    )
+    return BASE_PROMPT.format(catalog_section=catalog_section, memory_section=memory_section)
 
 
-# ─── Trigger Detection ────────────────────────────────────────────────────────
+# ─── Triggers ─────────────────────────────────────────────────────────────────
 
 NEW_ORDER_TRIGGERS = [
-    "new order", "log order", "log an order", "add order",
-    "add an order", "enter order", "enter an order", "create order",
-    "place order", "place an order",
+    "new order", "log order", "log an order", "add order", "add an order",
+    "enter order", "enter an order", "create order", "place order", "place an order",
 ]
 
 def is_new_order(message):
-    return any(trigger in message.lower() for trigger in NEW_ORDER_TRIGGERS)
+    return any(t in message.lower() for t in NEW_ORDER_TRIGGERS)
 
 
 # ─── Chat History ─────────────────────────────────────────────────────────────
@@ -295,36 +253,26 @@ def append_history(chat_id, role, content):
         chat_histories[chat_id] = chat_histories[chat_id][-MAX_HISTORY:]
 
 
-# ─── AI Layer ─────────────────────────────────────────────────────────────────
+# ─── AI ───────────────────────────────────────────────────────────────────────
 
 def ask_ai(chat_id, message, system_prompt):
     append_history(chat_id, "user", message)
     messages = [{"role": "system", "content": system_prompt}] + chat_histories[chat_id]
 
-    response = requests.post(
+    resp = requests.post(
         "https://openrouter.ai/api/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type":  "application/json",
-        },
-        json={
-            "model":    "nvidia/nemotron-3-super-120b-a12b:free",
-            "messages": messages,
-        },
+        headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+        json={"model": "nvidia/nemotron-3-super-120b-a12b:free", "messages": messages},
         timeout=60,
     )
 
-    result = response.json()
+    result = resp.json()
     if "choices" not in result:
-        return f"Error from AI: {result}", None, None
+        return f"AI error: {result}", None, None
 
     reply = result["choices"][0]["message"]["content"]
     append_history(chat_id, "assistant", reply)
-
-    order_data    = extract_order_json(reply)
-    memory_update = extract_memory_update(reply)
-    return reply, order_data, memory_update
-
+    return reply, extract_order_json(reply), extract_memory_update(reply)
 
 def extract_order_json(text):
     match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
@@ -332,49 +280,37 @@ def extract_order_json(text):
         return None
     try:
         data = json.loads(match.group(1))
-        if data.get("unleashed_order"):
-            return data
+        return data if data.get("unleashed_order") else None
     except json.JSONDecodeError:
-        pass
-    return None
-
+        return None
 
 def extract_memory_update(text):
     match = re.search(r'```memory\s*(.*?)\s*```', text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return None
-
+    return match.group(1).strip() if match else None
 
 def clean_reply(text):
     text = re.sub(r'```json\s*\{.*?\}\s*```', '', text, flags=re.DOTALL)
-    text = re.sub(r'```memory\s*.*?\s*```',   '', text, flags=re.DOTALL)
+    text = re.sub(r'```memory\s*.*?\s*```', '', text, flags=re.DOTALL)
     return text.strip()
 
-
-def format_order_summary(order_data, customer_name_map=None, product_name_map=None):
+def format_summary(order_data, customer_map=None, product_map=None):
     lines = []
     for line in order_data.get("lines", []):
         qty  = line.get("quantity", "?")
         code = line.get("product_code", "?")
-        name = (product_name_map or {}).get(code, "")
-        if name:
-            lines.append(f"  - {qty}x {name} ({code})")
-        else:
-            lines.append(f"  - {qty}x {code}")
+        name = (product_map or {}).get(code, "")
+        lines.append(f"  - {qty}x {name} ({code})" if name else f"  - {qty}x {code}")
 
-    items         = "\n".join(lines)
-    customer_code = order_data.get("customer_code", "?")
-    customer_name = (customer_name_map or {}).get(customer_code, "")
-    customer_line = f"{customer_name} ({customer_code})" if customer_name else customer_code
+    code          = order_data.get("customer_code", "?")
+    customer_name = (customer_map or {}).get(code, "")
+    customer_line = f"{customer_name} ({code})" if customer_name else code
     comments      = order_data.get("comments", "")
-    comment_line  = f"\nNotes: {comments}" if comments else ""
 
     return (
         f"Order summary\n"
         f"Customer: {customer_line}\n"
-        f"{items}"
-        f"{comment_line}\n\n"
+        f"{chr(10).join(lines)}"
+        f"{chr(10) + 'Notes: ' + comments if comments else ''}\n\n"
         f"Confirm and send to Unleashed?"
     )
 
@@ -382,8 +318,7 @@ def format_order_summary(order_data, customer_name_map=None, product_name_map=No
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if ALLOWED_USER_IDS and user_id not in ALLOWED_USER_IDS:
+    if ALLOWED_USER_IDS and update.effective_user.id not in ALLOWED_USER_IDS:
         return
     await update.message.reply_text(
         "Hey! I'm Wonka, the Conspiracy Chocolate logistics bot.\n\n"
@@ -394,7 +329,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- Invoice help\n"
         "- Log orders to Unleashed (say 'new order')\n"
         "- Core memory (say 'add to core memory: ...')\n\n"
-        "Example order: 'New order - Grand Hyatt, 10x assorted 6pc bonbon box'\n\n"
+        "Example: 'New order - Grand Hyatt, 10x assorted 6pc bonbon box'\n\n"
         "Let's go! 🍫"
     )
 
@@ -402,7 +337,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start_command(update, context)
 
 
-# ─── Confirmation Button Handler ──────────────────────────────────────────────
+# ─── Confirm / Cancel ─────────────────────────────────────────────────────────
 
 async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query   = update.callback_query
@@ -420,13 +355,13 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
         order_data = context.application.bot_data.pop(f"pending_{cid}", None)
         if not order_data:
             try:
-                with open(f"/tmp/wonka/{cid}.json") as pf:
-                    order_data = json.load(pf)
+                with open(f"/tmp/wonka/{cid}.json") as f:
+                    order_data = json.load(f)
                 os.remove(f"/tmp/wonka/{cid}.json")
             except Exception:
                 pass
         if not order_data:
-            await query.edit_message_text("Order data not found — please try again.")
+            await query.edit_message_text("Order data not found — please try the order again.")
             return
 
         await query.edit_message_text("Creating order in Unleashed...")
@@ -437,8 +372,7 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         if result["success"]:
             await query.edit_message_text(
-                f"Order created in Unleashed!\n"
-                f"Order: {result['order_number']} - Status: Parked"
+                f"Order created in Unleashed!\nOrder: {result['order_number']} - Status: Parked"
             )
         else:
             await query.edit_message_text(
@@ -455,15 +389,14 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("Order cancelled. Nothing was sent to Unleashed.")
 
 
-# ─── Main Message Handler ─────────────────────────────────────────────────────
+# ─── Message Handler ──────────────────────────────────────────────────────────
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
-    message = update.message.text if update.message.text else ""
+    message = update.message.text or ""
 
     if ALLOWED_USER_IDS and user_id not in ALLOWED_USER_IDS:
-        logging.warning(f"Blocked unauthorised user {user_id}")
         return
 
     if update.effective_chat.type in ["group", "supergroup"]:
@@ -472,57 +405,48 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         message = message.replace(f"@{bot_username}", "").strip()
 
-    core_memory = read_core_memory()
-
-    customer_lookup   = None
-    product_lookup    = None
-    customer_name_map = {}
-    product_name_map  = {}
+    core_memory   = read_core_memory()
+    customer_map  = {}
+    product_map   = {}
+    customer_lookup = None
+    product_lookup  = None
 
     if is_new_order(message):
-        # Clear history on new order so AI starts fresh
-        chat_histories[chat_id] = []
+        chat_histories[chat_id] = []  # fresh start for every new order
         try:
             await update.message.reply_text("Fetching latest catalog from the sheet...")
-            customer_lookup, product_lookup, customer_name_map, product_name_map = fetch_catalog()
+            customer_lookup, product_lookup, customer_map, product_map = fetch_catalog()
         except Exception as e:
-            logging.error(f"Sheet fetch failed: {e}")
-            await update.message.reply_text(
-                f"Couldn't reach the Google Sheet right now.\nError: {e}"
-            )
+            await update.message.reply_text(f"Couldn't reach the Google Sheet right now.\nError: {e}")
             return
 
-    system_prompt                    = build_system_prompt(customer_lookup, product_lookup, core_memory)
-    reply, order_data, memory_update = ask_ai(chat_id, message, system_prompt)
-    human_reply                      = clean_reply(reply)
+    system_prompt               = build_prompt(customer_lookup, product_lookup, core_memory)
+    reply, order_data, mem_update = ask_ai(chat_id, message, system_prompt)
+    human_reply                 = clean_reply(reply)
 
-    if memory_update is not None:
+    if mem_update is not None:
         try:
-            write_core_memory(memory_update)
+            write_core_memory(mem_update)
         except Exception as e:
-            logging.error(f"Failed to write core memory: {e}")
+            logging.error(f"Core memory write failed: {e}")
 
     if order_data:
-        summary = format_order_summary(order_data, customer_name_map, product_name_map)
-
         if human_reply:
             await update.message.reply_text(human_reply)
 
         context.application.bot_data[f"pending_{chat_id}"] = order_data
         try:
             os.makedirs("/tmp/wonka", exist_ok=True)
-            with open(f"/tmp/wonka/{chat_id}.json", "w") as pf:
-                json.dump(order_data, pf)
+            with open(f"/tmp/wonka/{chat_id}.json", "w") as f:
+                json.dump(order_data, f)
         except Exception as e:
-            logging.warning(f"Could not write pending order file: {e}")
+            logging.warning(f"Pending order file write failed: {e}")
 
-        keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("Confirm", callback_data=f"ok_{chat_id}"),
-                InlineKeyboardButton("Cancel",  callback_data=f"no_{chat_id}"),
-            ]
-        ])
-        await update.message.reply_text(summary, reply_markup=keyboard)
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("Confirm", callback_data=f"ok_{chat_id}"),
+            InlineKeyboardButton("Cancel",  callback_data=f"no_{chat_id}"),
+        ]])
+        await update.message.reply_text(format_summary(order_data, customer_map, product_map), reply_markup=keyboard)
     else:
         if human_reply:
             await update.message.reply_text(human_reply)
@@ -531,20 +455,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    WEBHOOK_URL = "https://telegram-ai-bot-1-ky7c.onrender.com"
-    PORT        = int(os.environ.get("PORT", 8080))
-
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help",  help_command))
     app.add_handler(CallbackQueryHandler(handle_confirmation))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print(f"Wonka is running via webhook on port {PORT}...")
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path="/webhook",
-        webhook_url=f"{WEBHOOK_URL}/webhook",
-        allowed_updates=Update.ALL_TYPES,
-    )
+    print("Wonka is running...")
+
+    # On Render, a new deploy briefly runs two instances simultaneously.
+    # We retry until the old instance dies and we win the poll.
+    max_retries = 15
+    for attempt in range(max_retries):
+        try:
+            app.run_polling(drop_pending_updates=True)
+            break
+        except Exception as e:
+            if ("409" in str(e) or "Conflict" in str(e)) and attempt < max_retries - 1:
+                print(f"409 — old instance still alive, retrying in 10s ({attempt + 1}/{max_retries})...")
+                time.sleep(10)
+            else:
+                raise
