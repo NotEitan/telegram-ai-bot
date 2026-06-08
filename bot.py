@@ -36,10 +36,10 @@ chat_histories = {}
 MAX_HISTORY    = 20
 
 # Path to the core memory file (persists on Render's disk)
-CORE_MEMORY_PATH = "/opt/render/project/src/core_memory.txt"
+CORE_MEMORY_PATH = "/tmp/core_memory.txt"
 
 # Pending orders are stored on disk so they survive across instances/restarts
-PENDING_ORDERS_DIR = "/opt/render/project/src/pending_orders"
+PENDING_ORDERS_DIR = "/tmp/pending_orders"
 
 
 # ─── Safe HTTP wrapper ────────────────────────────────────────────────────────
