@@ -104,16 +104,25 @@ def unleashed_headers(query_string=""):
 
 # ─── Price Lookup ─────────────────────────────────────────────────────────────
 
+# Customers with a specific price tier — everyone else defaults to Wholesale
+CUSTOMER_PRICE_TIERS = {
+    "C000023": "Sell Price Tier 5",       # COA
+    "C000067": "Partnership",             # Landmark Mandarin Oriental
+    "C000150": "Sell Price Tier 5",       # City Super
+    "CO00374": "Preferred Partnership",   # Brisa
+}
+
 def get_product_price(product_code, customer_code):
+    tier = CUSTOMER_PRICE_TIERS.get(customer_code, "Wholesale")
     try:
-        query = f"productCode={product_code}&customerCode={customer_code}"
+        query = f"productCode={product_code}&sellPriceTier={tier}"
         resp  = unleashed_request("GET", f"/ProductPrices?{query}", headers=unleashed_headers(query), timeout=10)
         if resp.status_code == 200:
             items = resp.json().get("Items", [])
             if items:
                 return items[0].get("UnitPrice", 0) or 0
     except Exception as e:
-        logging.warning(f"Price lookup failed for {product_code}: {e}")
+        logging.warning(f"Price lookup failed for {product_code} (tier: {tier}): {e}")
     return 0
 
 
