@@ -532,12 +532,38 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == "__main__":
     import time
+    import asyncio
+    import httpx
 
-    # Wait for Render to kill the old instance before we start polling.
-    # Render kills the old instance within ~30s of the new one starting.
-    print("Waiting 35s for old instance to shut down...")
-    time.sleep(35)
-    print("Starting now.")
+    async def wait_for_clear():
+        """Poll Telegram until no other instance is connected, then return."""
+        token = TELEGRAM_TOKEN
+        print("Checking if another instance is running...")
+        for attempt in range(30):  # max 5 minutes
+            try:
+                async with httpx.AsyncClient() as client:
+                    r = await client.post(
+                        f"https://api.telegram.org/bot{token}/getUpdates",
+                        json={"timeout": 0, "limit": 1},
+                        timeout=10,
+                    )
+                    data = r.json()
+                    if data.get("ok"):
+                        print(f"Instance is clear after {attempt * 10}s, starting...")
+                        return
+                    err = data.get("description", "")
+                    if "conflict" in err.lower() or "409" in str(r.status_code):
+                        print(f"Another instance running, waiting 10s... (attempt {attempt+1})")
+                        await asyncio.sleep(10)
+                    else:
+                        print(f"Unexpected response: {data}, starting anyway...")
+                        return
+            except Exception as e:
+                print(f"Check failed: {e}, waiting 10s...")
+                await asyncio.sleep(10)
+        print("Giving up waiting, starting anyway...")
+
+    asyncio.run(wait_for_clear())
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
