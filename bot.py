@@ -563,7 +563,7 @@ if __name__ == "__main__":
                 await asyncio.sleep(10)
         print("Giving up waiting, starting anyway...")
 
-    asyncio.run(wait_for_clear())
+    asyncio.get_event_loop().run_until_complete(wait_for_clear())
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
