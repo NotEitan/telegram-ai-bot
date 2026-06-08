@@ -455,6 +455,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    time.sleep(20)
+    
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help",  help_command))
@@ -462,17 +464,4 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("Wonka is running...")
-
-    # On Render, a new deploy briefly runs two instances simultaneously.
-    # We retry until the old instance dies and we win the poll.
-    max_retries = 15
-    for attempt in range(max_retries):
-        try:
-            app.run_polling(drop_pending_updates=True)
-            break
-        except Exception as e:
-            if ("409" in str(e) or "Conflict" in str(e)) and attempt < max_retries - 1:
-                print(f"409 — old instance still alive, retrying in 10s ({attempt + 1}/{max_retries})...")
-                time.sleep(10)
-            else:
-                raise
+    app.run_polling(drop_pending_updates=True)
