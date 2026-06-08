@@ -146,6 +146,31 @@ def fetch_catalog():
     return customer_lines, product_lines, customer_name_map, product_name_map
 
 
+# ─── Unleashed Price Lookup ──────────────────────────────────────────────────
+
+def get_product_price(product_code, customer_code):
+    """
+    Fetch the correct sell price for a product/customer combination from Unleashed.
+    Falls back to 0 if not found (Unleashed will use default tier).
+    """
+    try:
+        query = f"productCode={product_code}&customerCode={customer_code}"
+        resp = unleashed_request(
+            "GET",
+            f"/ProductPrices?{query}",
+            headers=unleashed_headers(query),
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get("Items", [])
+            if items:
+                return items[0].get("UnitPrice", 0) or 0
+    except Exception as e:
+        logging.warning(f"Could not fetch price for {product_code}: {e}")
+    return 0
+
+
 # ─── Unleashed API Auth ───────────────────────────────────────────────────────
 
 def unleashed_headers(query_string=""):
@@ -173,15 +198,16 @@ def create_sales_order(customer_code, lines, comments=""):
 
     sales_order_lines = []
     for i, line in enumerate(lines, start=1):
+        # Use explicitly provided price, or fetch from Unleashed price tiers
+        unit_price = line.get("unit_price") or get_product_price(
+            line["product_code"], customer_code
+        )
         line_item = {
             "LineNumber":    i,
             "Product":       {"ProductCode": line["product_code"]},
             "OrderQuantity": line["quantity"],
+            "UnitPrice":     unit_price,
         }
-        # Only set UnitPrice if explicitly provided — otherwise Unleashed
-        # uses the customer's default price tier automatically
-        if line.get("unit_price"):
-            line_item["UnitPrice"] = line["unit_price"]
         sales_order_lines.append(line_item)
 
     payload = {
