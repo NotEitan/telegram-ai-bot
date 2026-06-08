@@ -117,6 +117,7 @@ def get_product_price(product_code, customer_code):
     try:
         query = f"productCode={product_code}&sellPriceTier={tier}"
         resp  = unleashed_request("GET", f"/ProductPrices?{query}", headers=unleashed_headers(query), timeout=10)
+        logging.info(f"Price lookup response: {resp.status_code} — {resp.text[:300]}")
         if resp.status_code == 200:
             items = resp.json().get("Items", [])
             if items:
