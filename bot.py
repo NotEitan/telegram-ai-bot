@@ -186,11 +186,11 @@ def create_sales_order(customer_code, lines, comments=""):
 
 # ─── System Prompt ────────────────────────────────────────────────────────────
 
-BASE_PROMPT = """You are Wonka, a smart and reliable logistics assistant for Conspiracy Chocolate — a boutique chocolatier based in Hong Kong with operations in Singapore and Australia.
+BASE_PROMPT = """You are Wonka, a smart and reliable logistics assistant for Conspiracy Chocolate — a boutique chocolatier based in Hong Kong with operations in Macao as well.
 
 About the company:
 - Small team of 8-9 staff
-- Products are handmade chocolates shipped to clients across Hong Kong, Macao, Singapore, and Australia
+- Products are handmade chocolates shipped to clients across Hong Kong and Macao
 - The user handles ALL logistics: packing orders, creating invoices, managing couriers, and packaging inventory
 
 Your main jobs:
@@ -531,39 +531,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import time
-    import asyncio
-    import httpx
-
-    async def wait_for_clear():
-        """Poll Telegram until no other instance is connected, then return."""
-        token = TELEGRAM_TOKEN
-        print("Checking if another instance is running...")
-        for attempt in range(30):  # max 5 minutes
-            try:
-                async with httpx.AsyncClient() as client:
-                    r = await client.post(
-                        f"https://api.telegram.org/bot{token}/getUpdates",
-                        json={"timeout": 0, "limit": 1},
-                        timeout=10,
-                    )
-                    data = r.json()
-                    if data.get("ok"):
-                        print(f"Instance is clear after {attempt * 10}s, starting...")
-                        return
-                    err = data.get("description", "")
-                    if "conflict" in err.lower() or "409" in str(r.status_code):
-                        print(f"Another instance running, waiting 10s... (attempt {attempt+1})")
-                        await asyncio.sleep(10)
-                    else:
-                        print(f"Unexpected response: {data}, starting anyway...")
-                        return
-            except Exception as e:
-                print(f"Check failed: {e}, waiting 10s...")
-                await asyncio.sleep(10)
-        print("Giving up waiting, starting anyway...")
-
-    asyncio.get_event_loop().run_until_complete(wait_for_clear())
+    WEBHOOK_URL = "https://telegram-ai-bot-1-ky7c.onrender.com"
+    PORT        = int(os.environ.get("PORT", 10000))
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
@@ -571,5 +540,9 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(handle_confirmation))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("Wonka is running...")
-    app.run_polling(drop_pending_updates=True)
+    print("Wonka is running via webhook...")
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_url=f"{WEBHOOK_URL}/webhook",
+    )
