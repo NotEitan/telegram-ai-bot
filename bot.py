@@ -471,5 +471,6 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(handle_confirmation))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
+    app.add_error_handler(lambda update, context: None)
     print("Wonka is running...")
     app.run_polling(drop_pending_updates=True)
