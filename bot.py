@@ -571,6 +571,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     product_name_map  = {}
 
     if is_new_order(message):
+        # Clear history so the AI starts fresh — prevents old context confusing it
+        chat_histories[chat_id] = []
         try:
             await update.message.reply_text("📋 Fetching latest catalog from the sheet...")
             customer_lookup, product_lookup, customer_name_map, product_name_map = fetch_catalog()
