@@ -93,9 +93,11 @@ def fetch_sheet_tab(sheet_id, tab_name):
         f"https://docs.google.com/spreadsheets/d/{sheet_id}"
         f"/gviz/tq?tqx=out:csv&sheet={tab_name}"
     )
+    logging.info(f"Fetching sheet tab '{tab_name}' from: {url}")
     resp = requests.get(url, timeout=10)
+    logging.info(f"Sheet response: HTTP {resp.status_code}, first 200 chars: {resp.text[:200]}")
     if resp.status_code != 200:
-        raise RuntimeError(f"Could not fetch sheet tab '{tab_name}': HTTP {resp.status_code}")
+        raise RuntimeError(f"Could not fetch sheet tab '{tab_name}': HTTP {resp.status_code}\nURL: {url}\nResponse: {resp.text[:300]}")
     reader = csv.DictReader(io.StringIO(resp.text))
     return [row for row in reader]
 
@@ -189,11 +191,11 @@ def create_sales_order(customer_code, lines, comments=""):
 
 # ─── System Prompt ────────────────────────────────────────────────────────────
 
-BASE_PROMPT = """You are Wonka, a smart and reliable logistics assistant for Conspiracy Chocolate — a boutique chocolatier based in Hong Kong with operations in Macao.
+BASE_PROMPT = """You are Wonka, a smart and reliable logistics assistant for Conspiracy Chocolate — a boutique chocolatier based in Hong Kong with operations in Singapore and Australia.
 
 About the company:
 - Small team of 8-9 staff
-- Products are handmade chocolates shipped to clients across Hong Kong and Macao
+- Products are handmade chocolates shipped to clients across Hong Kong, Macao, Singapore, and Australia
 - The user handles ALL logistics: packing orders, creating invoices, managing couriers, and packaging inventory
 
 Your main jobs:
@@ -557,10 +559,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import time
+    # Wait for any previous instance to fully shut down before polling starts.
+    # This prevents the 409 Conflict error on Render deploys.
+    print("Wonka starting up, waiting 5s for previous instance to shut down...")
+    time.sleep(5)
+
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help",  help_command))
     app.add_handler(CallbackQueryHandler(handle_confirmation))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("Wonka is running...")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
