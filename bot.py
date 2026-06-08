@@ -153,12 +153,16 @@ def create_sales_order(customer_code, lines, comments=""):
 
     sales_order_lines = []
     for i, line in enumerate(lines, start=1):
-        sales_order_lines.append({
+        line_item = {
             "LineNumber":    i,
             "Product":       {"ProductCode": line["product_code"]},
             "OrderQuantity": line["quantity"],
-            "UnitPrice":     line.get("unit_price", 0),
-        })
+        }
+        # Only set UnitPrice if explicitly provided — otherwise Unleashed
+        # uses the customer's default price tier automatically
+        if line.get("unit_price"):
+            line_item["UnitPrice"] = line["unit_price"]
+        sales_order_lines.append(line_item)
 
     payload = {
         "Guid":            order_guid,
