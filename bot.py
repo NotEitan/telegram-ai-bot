@@ -186,11 +186,11 @@ def create_sales_order(customer_code, lines, comments=""):
 
 # ─── System Prompt ────────────────────────────────────────────────────────────
 
-BASE_PROMPT = """You are Wonka, a smart and reliable logistics assistant for Conspiracy Chocolate — a boutique chocolatier based in Hong Kong with operations in Macao as well.
+BASE_PROMPT = """You are Wonka, a smart and reliable logistics assistant for Conspiracy Chocolate — a boutique chocolatier based in Hong Kong with operations in Singapore and Australia.
 
 About the company:
 - Small team of 8-9 staff
-- Products are handmade chocolates shipped to clients across Hong Kong and Macao
+- Products are handmade chocolates shipped to clients across Hong Kong, Macao, Singapore, and Australia
 - The user handles ALL logistics: packing orders, creating invoices, managing couriers, and packaging inventory
 
 Your main jobs:
@@ -544,5 +544,6 @@ if __name__ == "__main__":
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
+        url_path="webhook",
         webhook_url=f"{WEBHOOK_URL}/webhook",
     )
